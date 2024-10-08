@@ -1,0 +1,55 @@
+trigger:
+- none
+
+pool:
+  name: 'SonarQube Integration Agent Pool'
+
+variables:
+  azureSubscription: ARGOCD_CONNECTION-dxo
+stages:
+  - stage: 
+    displayName: 'Liquibase Commands'
+    jobs:
+      - job: RunLiquibase
+        displayName: 'Run Liquibase'
+        steps:
+         
+          - task: AzureKeyVault@2
+            inputs:
+              azureSubscription: ${{ variables.azureSubscription }} # Service connection for the Azure subscription containing the Azure Key Vault instance
+              KeyVaultName: 'DXOKeyVault' # Name of the Azure Key Vault instance
+              SecretsFilter: 'SMTP-USERNAME, SMTP-PASSWORD, mysqlUsername, mysqlPassword, referenceUsername, referencePassword' # The secrets that need to be downloaded. '*' indicates all secrets
+              RunAsPreJob: false # Runs the task before the job execution begins. Exposes secrets to all tasks in the job, not just tasks that follow this one.
+
+          - template: templates/cen_liquibase.yml
+            parameters:
+              operationChoice: 'status'
+              tag: '070124-01'
+              #rollbackTag: '070124-01'
+              azureSubscription: ${{ variables.azureSubscription }}
+              liquibaseProperties: 'dev.liquibase.properties'
+              extraArguments: '--diff-types=catalogs,checkconstraints,columns,databasepackage,databasepackagebody,foreignkeys,functions,indexes,primarykeys,sequences,storedprocedures,tables,triggers,uniqueconstraints,views'
+              contextFilter: 'dev' #qa,dev
+              labelFilter: 'Release1' #featureA,featureB,featureC,JIRA-101,JIRA-102,JIRA-103,Release1,Release2
+              mysqlUsername: 'admin123'
+              mysqlPassword: 'azure-sql-cloud@123'
+              referenceUsername: $(referenceUsername)
+              referencePassword: $(referencePassword)
+
+ 
+#Possible va lues for operationChoice
+#    - 'update'
+#         Executes the liquibase scripts against the target database
+#    - 'rollback'
+#         Rollback to specified rollback tag
+#    - 'generateChangeLog'
+#          Generates changelog from the target database and sends an email
+#          Liquibase PRO License Key required
+#    - 'diffChangeLog'
+#          Generates changelog of the difference between the source and target database.(DOES NOT UPDATE THE TARGET)
+#    - 'migrate'
+#          Generates the difference changelog and updates the target database
+#    - 'status'
+#          Compares the liquibase scripts against the target database and provides a status
+#    - 'diff'
+#          Provides a difference between the target and source databases in json or yaml format

@@ -1,0 +1,148 @@
+parameters:
+- name: operationChoice
+  displayName: 'Select Operation'
+  type: string
+  values:
+    - 'update'
+    - 'rollback'
+    - 'generateChangeLog'
+    - 'diffChangeLog'
+    - 'migrate'
+    - 'status'
+    - 'diff'
+    - 'list-locks'
+    - 'release-locks'
+
+- name: rollbackTag
+  displayName: 'Rollback Tag'
+  type: string
+  default: ''
+
+- name: tag
+  displayName: 'Tag'
+  type: string
+  default: '' 
+
+- name: liquibaseProperties
+  displayName: 'Liquibase Properties File'
+  type: string
+
+- name: azureSubscription
+  displayName: 'Subscription'
+  type: string
+
+- name: extraArguments
+  displayName: 'Extra Arguments'
+  type: string
+  default: ''
+
+- name: differenceFileFormat
+  displayName: 'Output file format for difference'
+  type: string
+  default: 'yaml'
+
+- name: contextFilter
+  displayName: 'Context Filter'
+  type: 'string'
+  default: ''
+  
+- name: labelFilter
+  displayName: 'Label Filter'
+  type: 'string'
+  default: ''
+
+- name: mysqlUsername
+  displayName: 'mysqlUsername'
+  type: 'string'
+
+- name: mysqlPassword
+  displayName: 'mysqlPassword'
+  type: 'string'
+
+- name: referenceUsername
+  displayName: 'referenceUsername'
+  type: 'string'
+
+- name: referencePassword
+  displayName: 'referencePassword'
+  type: 'string' 
+
+
+steps:
+  
+  - script: |
+        curl -o mysql-connector-java.jar https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.26/mysql-connector-java-8.0.26.jar
+        mkdir $(Build.SourcesDirectory)/liquibase/lib
+        mv mysql-connector-java.jar $(Build.SourcesDirectory)/liquibase/lib
+    displayName: 'Download MySQL Connector/J'
+
+  - script: |
+        chmod -R 777 $(Build.SourcesDirectory)
+        dos2unix templates/cen_send_email.sh
+        source templates/cen_send_email.sh
+        case ${{ parameters.operationChoice }} in
+          "update")
+              # Execute Liquibase Update Command
+              #[ -z ${{ parameters.contextFilter }} ] && { echo "Parameter 'contextFilter' is empty or null"; exit 1; }
+              #[ -z ${{ parameters.labelFilter }} ] && { echo "Parameter 'labelFilter' is empty or null"; exit 1; }
+              docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --changeLogFile=/liquibase/changelog/db.changelog-master-sql.xml --searchPath=/ update --label-filter="${{ parameters.labelFilter }}" --context-filter="${{ parameters.contextFilter }}" --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --searchPath=/ tag --tag=${{ parameters.tag }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }} 
+              #docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/liquibase.properties tag --tag=${{ parameters.tag }} 
+              ;;
+
+          "rollback")
+              # Execute Liquibase Rollback Command
+              [ -z ${{ parameters.rollbackTag }} ] && { echo "Parameter 'rollbackTag' is empty or null"; exit 1; }
+              docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --changeLogFile=/liquibase/changelog/db.changelog-master-sql.xml --searchPath=/ rollback ${{ parameters.rollbackTag }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              ;;
+
+          "generateChangeLog")
+              # Execute Liquibase Generate ChangeLog command
+              docker run --net="host" -u 1001:1001 -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --changeLogFile=/liquibase/changelog/generated-changelog-xml.xml --searchPath=/ generate-changelog ${{ parameters.extraArguments }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              send_email_with_attachment "$(Build.SourcesDirectory)/liquibase/generated-changelog-xml.xml" "$(Build.RequestedForEmail)" "$(SMTP-USERNAME)" "$(SMTP-PASSWORD)" "Generated Changelog file using ${{ parameters.liquibaseProperties }} at $(date)"
+              ;;
+        
+          "diffChangeLog")
+              # Execute Liquibase Difference ChangeLog command 
+              docker run --rm --net="host" -u 1001:1001 -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --changeLogFile=/liquibase/changelog/difference-changelog-xml.xml --searchPath=/ diff-changelog ${{ parameters.extraArguments }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }} --reference-username=${{ parameters.referenceUsername }} --reference-password=${{ parameters.referencePassword }}
+              send_email_with_attachment "$(Build.SourcesDirectory)/liquibase/difference-changelog-xml.xml" "$(Build.RequestedForEmail)" "$(SMTP-USERNAME)" "$(SMTP-PASSWORD)" "Difference Changelog file using ${{ parameters.liquibaseProperties }} at $(date)"
+              ;;
+
+          "migrate") 
+              # Execute Liquibase Difference ChangeLog command
+              docker run --rm --net="host" -u 1001:1001 -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --changeLogFile=/liquibase/changelog/difference-changelog-xml.xml --searchPath=/ diff-changelog ${{ parameters.extraArguments }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }} --reference-username=${{ parameters.referenceUsername }} --reference-password=${{ parameters.referencePassword }} --exclude-objects="DATABASECHANGELOG,DATABASECHANGELOGLOCK,databasechangelog,databasechangeloglock"
+              send_email_with_attachment "$(Build.SourcesDirectory)/liquibase/difference-changelog-xml.xml" "$(Build.RequestedForEmail)" "$(SMTP-USERNAME)" "$(SMTP-PASSWORD)" "Difference Changelog file pre Migration using ${{ parameters.liquibaseProperties }} at $(date)"
+              docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --changeLogFile=/liquibase/changelog/difference-changelog-xml.xml --searchPath=/ update --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --searchPath=/ tag --tag=${{ parameters.tag }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              docker run --rm --net="host" -u 1001:1001 -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} diff --output-file=/liquibase/changelog/post-migration.${{ parameters.differenceFileFormat }} --exclude-objects="DATABASECHANGELOG,DATABASECHANGELOGLOCK,databasechangelog,databasechangeloglock" --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }} --reference-username=${{ parameters.referenceUsername }} --reference-password=${{ parameters.referencePassword }}
+              send_email_with_attachment "$(Build.SourcesDirectory)/liquibase/post-migration.${{ parameters.differenceFileFormat }}" "$(Build.RequestedForEmail)" "$(SMTP-USERNAME)" "$(SMTP-PASSWORD)" "Post Migration Difference file using ${{ parameters.liquibaseProperties }} at $(date)"
+              ;;
+
+          "status")
+              # Execute Liquibase Status Command
+              liquibase --changeLogFile=$(Build.SourcesDirectory)/liquibase/db.changelog-master-sql.xml --defaultsFile=$(Build.SourcesDirectory)/liquibase/properties/${{ parameters.liquibaseProperties }} status --label-filter=${{ parameters.labelFilter }} --context-filter=${{ parameters.contextFilter }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              ;;
+            
+          "list-locks")
+              # Execute Liquibase Status Command
+              docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --searchPath=/ list-locks --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              ;;
+            
+          "release-locks")
+              # Execute Liquibase Status Command
+              docker run --rm -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} --searchPath=/ release-locks --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }}
+              ;;
+
+          "diff")
+              # Execute Liquibase Difference command 
+              docker run --rm --net="host" -u 1001:1001 -v $(Build.SourcesDirectory)/liquibase:/liquibase/changelog liquibase/liquibase --defaultsFile=/liquibase/changelog/properties/${{ parameters.liquibaseProperties }} diff --output-file=/liquibase/changelog/output.${{ parameters.differenceFileFormat }} --username=${{ parameters.mysqlUsername }} --password=${{ parameters.mysqlPassword }} --reference-username=${{ parameters.referenceUsername }} --reference-password=${{ parameters.referencePassword }}
+              send_email_with_attachment "$(Build.SourcesDirectory)/liquibase/output.${{ parameters.differenceFileFormat }}" "$(Build.RequestedForEmail)" "$(SMTP-USERNAME)" "$(SMTP-PASSWORD)" "Difference file using ${{ parameters.liquibaseProperties }} at $(date)"
+              ;;
+
+          *)
+              # No Options Given
+              echo 'Incorrect or No option given to the liquibase template.'
+              exit 1
+              ;;
+
+        esac 
